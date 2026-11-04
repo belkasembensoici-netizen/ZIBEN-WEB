@@ -7,6 +7,117 @@ Status: Initial Architecture
 Project Type: AI-Native Business Operating System
 Target: Global SaaS Platform
 
+## Current Engineering Directive
+
+The current owner-approved direction supersedes any conflicting initial
+assumptions below: ZIBEN Nova OS is an independent, cloud-first global SaaS
+platform. Local infrastructure and the separate ZIBEN Docker/Local Stack are
+not product dependencies. Preserve the existing frontend prototype and visual
+identity; do not rewrite it without a separate approved plan.
+
+The highest product priorities are the ZIBEN Command Center and ZIBEN Market
+Intelligence. Provider selection remains open; database and infrastructure
+design must remain portable until the owner selects a cloud platform.
+
+### Phase 1D — PostgreSQL Foundation
+
+The backend uses NestJS, TypeScript, PostgreSQL, `pg`, and Drizzle. Runtime
+connections use `DATABASE_URL` with the restricted `app_runtime` identity.
+Migration operations use a separate `DATABASE_MIGRATION_URL` with
+`db_migrator`; credentials must be injected through a managed secret store or
+protected CI environment, not committed to project files.
+
+TLS certificate and hostname verification are the default in every
+environment. A managed PostgreSQL CA bundle may be injected through
+`DATABASE_SSL_CA`. Insecure TLS is an explicit opt-in limited to loopback
+development hosts and is never the cloud deployment mode.
+
+Migrations are a deployment operation, never an application-startup action.
+Drizzle Kit configuration is schema-generation-only and contains no database
+credentials. The guarded `db:migrate` runner reads the reviewed Drizzle SQL,
+requires pre-provisioned `app` and `drizzle` schemas, validates the expected
+environment/host/port/database, live role, TLS, schema ownership, schema-scoped
+privileges, and effective `schema_owner` role assumption, then applies pending
+SQL transactionally under a PostgreSQL advisory lock. Migration and schema
+owner roles must not have database-level `CREATE`; their `CREATE` privileges
+are scoped to their respective schemas. CI/CD must additionally serialize
+deployment jobs and inject migration credentials only into the guarded job.
+Direct invocation of Drizzle Kit's migrate command is unsupported. The
+repository CI workflow runs offline build and test checks only; it does not
+deploy migrations or provide database credentials. Production migration
+secret-injection and serialization controls remain unconfigured, so
+production-exclusive execution is not verified.
+
+Integration tests target an isolated, disposable managed PostgreSQL test
+database using separate `db_migrator` and `app_test_runtime` identities. They
+validate configured endpoint/database/role values before applying migrations;
+credential scope and protected CI secrets remain independent safety controls.
+No local PostgreSQL container or local volume is part of this workflow.
+
+The backend exposes a dependency-free liveness endpoint and a sanitized
+PostgreSQL readiness endpoint. The existing frontend can display the readiness
+result when deployed with a same-origin API reverse proxy; no tenant, AI,
+automation, or business capabilities are implied by this operational check.
+
+The frontend retains the marketing experience and includes a responsive
+application shell for planned workspaces. Its Command Center currently reports
+service health and API capability status only; commerce, identity, AI,
+automation, and market intelligence remain unavailable. `GET /api/v1/capabilities`
+is static implementation metadata and does not expose business data. Empty
+states are intentional and must not be replaced with fabricated metrics.
+
+The backend exports non-HTTP domain foundations for AI provider execution,
+evidence-provenance validation, and HMAC webhook verification. These services
+have focused offline unit coverage but no provider, market source, database
+storage, durable replay protection, or public business endpoints. Their
+capability states are partial, not complete integrations.
+
+The commerce domain also contains tested minor-unit total calculation, order
+state transitions, and COD collection/reconciliation invariants. It does not
+provide persistence, inventory concurrency, authenticated APIs, shipping, or
+payment-provider integration.
+
+The identity module exports a tenant authorization boundary that combines a
+verified principal with an active tenant membership and role check. An
+optional OIDC verifier validates RS256/ES256 token signatures, issuer,
+audience, time claims, and JWKS key rotation; it remains default-deny until
+configured and is not an HTTP authentication guard. See
+[ADR 0001](./adr/0001-enterprise-identity-and-tenant-context.md). Its
+unconfigured adapters deny by default; this is not end-to-end authentication.
+Domain tables and forced RLS policies now exist, but those policies currently
+rely on caller-settable PostgreSQL settings and are not an authenticated
+tenant boundary. A follow-up migration removes `app_runtime` access to the
+`app` schema and its objects until a trusted identity/verifier design is approved.
+That migration has not yet been applied, so tenant-data routes must remain
+unavailable until the guarded migration is deployed. The separate integration
+role can exercise the policies on an isolated test database, but this is not
+production tenant-isolation evidence.
+
+Cloud provider selection is pending. This is a preliminary, provider-neutral
+comparison; region availability, network features, pricing, and product terms
+must be rechecked for the actual deployment regions before selection.
+
+| Candidate                                     | Global/compatibility and connectivity                                                                                                           | Security, recovery, and scale                                                                                                       | Cost/operations considerations                                                                                                                               |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| AWS RDS for PostgreSQL / Aurora PostgreSQL    | Broad AWS region footprint; VPC private networking; standard PostgreSQL on RDS, with Aurora's PostgreSQL-compatible engine as a separate option | Managed TLS certificates/CA rotation, IAM authentication options, automated backups/PITR, HA and read scaling choices               | RDS is a comparatively direct managed-Postgres path; Aurora adds engine and pricing complexity. Compare actual region, storage, I/O, HA, and transfer costs. |
+| Azure Database for PostgreSQL Flexible Server | Azure regions and VNet/private access options; standard PostgreSQL service                                                                      | TLS/CA configuration, Entra ID authentication options, managed backups/PITR and HA/scaling features vary by region/tier             | Attractive when application identity, networking, and operations are already Azure-based; pricing is tier/region dependent.                                  |
+| Google Cloud SQL for PostgreSQL               | Google Cloud regions; private IP and supported private connectivity; standard PostgreSQL service                                                | TLS/CA controls, IAM database authentication options, managed backups/PITR, HA and read replicas                                    | Attractive when backend workloads are already on Google Cloud; machine, storage, HA, and network costs require workload-specific comparison.                 |
+| Aiven for PostgreSQL                          | Managed service offered across multiple cloud providers/regions; private connectivity depends on provider and plan                              | Managed TLS/CA and backup features; validate identity integration, recovery objectives, and network topology for the selected cloud | Can reduce provider coupling, but introduces another service boundary and may cost more than a cloud-native option at comparable scale.                      |
+| Neon                                          | Serverless PostgreSQL with branching-oriented workflows; region and private networking availability depend on current plan/features             | TLS and scaling capabilities; validate enterprise identity, network isolation, backup/PITR guarantees, and workload limits          | Useful to evaluate for ephemeral CI databases and development workflows; confirm production workload fit, service limits, and current pricing.               |
+
+Evaluate region coverage and latency, private networking, PostgreSQL
+compatibility, TLS/CA rotation, identity controls, backup/PITR and recovery
+objectives, scaling/performance, total price, and operational effort. Provider
+pricing and feature availability vary by region and change over time.
+
+**Recommendation:** defer provider selection until the application hosting
+cloud, launch regions, recovery objectives, and expected workload are agreed.
+Prefer a managed standard-PostgreSQL service in the same cloud/network as the
+backend unless measured requirements justify a portable specialist provider.
+Keep provider-specific CA injection, private connectivity, IAM authentication,
+backup automation, and ephemeral test-database provisioning outside the
+domain modules.
+
 ---
 
 1. Product Vision
@@ -55,13 +166,13 @@ All code must remain organized, documented, testable, and understandable.
 3. Core Platform Modules
 
 1. ZIBEN Nova Core
-2. Commerce OS
-3. AI Agent Studio
-4. Automation Engine
-5. Marketing Intelligence
-6. Business Intelligence
-7. Developer Platform
-8. Identity and Access Management
+1. Commerce OS
+1. AI Agent Studio
+1. Automation Engine
+1. Marketing Intelligence
+1. Business Intelligence
+1. Developer Platform
+1. Identity and Access Management
 
 These modules represent the target product architecture. They will be implemented progressively.
 
@@ -91,8 +202,7 @@ Microservices will only be considered when justified by measurable technical req
 
 No major architectural change, dependency installation, file deletion, or automated code rewrite should happen without review, explanation, and testing.
 
-Every implementation phase must produce a working, verifiable result. 
-7. System Architecture
+Every implementation phase must produce a working, verifiable result. 7. System Architecture
 
 7.1 Architecture Style
 
